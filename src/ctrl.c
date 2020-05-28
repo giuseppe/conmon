@@ -14,11 +14,107 @@
 #include <sys/stat.h>
 #include <termios.h>
 
+#include <seccomp.h>
+#include <linux/seccomp.h>
+#include <linux/netlink.h>
+
+static struct seccomp_notif_sizes sizes;
+static struct seccomp_notif *req;
+static struct seccomp_notif_resp *resp;
+
 static void resize_winsz(int height, int width);
 static gboolean read_from_ctrl_buffer(int fd, gboolean (*line_process_func)(char *));
 static gboolean process_terminal_ctrl_line(char *line);
 static gboolean process_winsz_ctrl_line(char *line);
 static void setup_fifo(int *fifo_r, int *fifo_w, char *filename, char *error_var_name);
+
+static int seccomp(unsigned int op, unsigned int flags, void *args)
+{
+	errno = 0;
+	return syscall(__NR_seccomp, op, flags, args);
+}
+
+static int handle_req(struct seccomp_notif *req,
+		      struct seccomp_notif_resp *resp, int listener)
+{
+	(void) req;
+	(void) resp;
+	(void) listener;
+
+	static uint64_t audit_pid = 0;
+	static uint64_t audit_fd = 0;
+	
+	resp->id = req->id;
+	resp->error = 0;
+	resp->val = 0;
+	resp->flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+
+	if (req->data.nr == __NR_socket) {
+		resp->error = -ENOTSUP;
+		resp->flags = 0;
+		audit_pid = req->pid;
+		audit_pid = req->pid;
+	}
+
+	if (req->data.nr == __NR_close &&
+	    audit_pid == req->pid &&
+	    audit_fd == req->data.args[0]) {
+		audit_pid = 0;
+		audit_fd = 0;
+	}
+
+	return 0;
+}
+
+gboolean seccomp_accept_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data)
+{
+	ninfof("about to accept from seccomp_socket_fd: %d", fd);
+	int connfd = accept4(fd, NULL, NULL, SOCK_CLOEXEC);
+	if (connfd < 0) {
+		nwarn("Failed to accept console-socket connection");
+		return G_SOURCE_CONTINUE;
+	}
+
+	struct file_t console = recvfd(connfd);
+	close(connfd);
+	if (req == NULL) {
+		if (seccomp(SECCOMP_GET_NOTIF_SIZES, 0, &sizes) < 0) {
+			pexitf("seccomp");
+		}
+		req = malloc(sizes.seccomp_notif);
+		if (!req)
+			pexitf("malloc");
+
+		resp = malloc(sizes.seccomp_notif_resp);
+		if (!resp)
+			pexitf("malloc");
+		memset(resp, 0, sizes.seccomp_notif_resp);
+	}
+	g_unix_fd_add(console.fd, G_IO_IN|G_IO_HUP, seccomp_cb, NULL);
+	return G_SOURCE_CONTINUE;
+}
+
+gboolean seccomp_cb(int fd, GIOCondition condition, G_GNUC_UNUSED gpointer user_data)
+{
+	(void) fd;
+	if (condition & G_IO_IN) {
+		memset(req, 0, sizes.seccomp_notif);
+		if (ioctl(fd, SECCOMP_IOCTL_NOTIF_RECV, req)) {
+			return G_SOURCE_CONTINUE;
+		}
+
+		if (handle_req(req, resp, fd) < 0) {
+			return G_SOURCE_CONTINUE;
+		}			
+
+		if (ioctl(fd, SECCOMP_IOCTL_NOTIF_SEND, resp) < 0 &&
+		    errno != ENOENT) {
+			return G_SOURCE_CONTINUE;
+		}
+
+	}
+	return G_SOURCE_CONTINUE;
+}
 
 gboolean terminal_accept_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data)
 {

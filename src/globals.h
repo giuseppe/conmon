@@ -16,6 +16,7 @@ extern GPtrArray *conn_socks;
 
 extern int attach_socket_fd;
 extern int console_socket_fd;
+extern int seccomp_socket_fd;
 extern int terminal_ctrl_fd;
 extern int inotify_fd;
 extern int winsz_fd_w;

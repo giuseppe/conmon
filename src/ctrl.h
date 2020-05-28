@@ -3,8 +3,10 @@
 
 #include <glib.h> /* gpointer */
 
+gboolean seccomp_accept_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
 gboolean terminal_accept_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
 gboolean ctrl_winsz_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
+gboolean seccomp_cb(int fd, GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
 gboolean ctrl_cb(int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
 void setup_console_fifo();
 int setup_terminal_control_fifo();

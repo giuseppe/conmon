@@ -21,11 +21,14 @@ void conn_sock_shutdown(struct conn_sock_s *sock, int how);
 static void sock_try_write_to_masterfd_stdin(struct conn_sock_s *sock);
 static gboolean masterfd_write_cb(G_GNUC_UNUSED int fd, G_GNUC_UNUSED GIOCondition condition, G_GNUC_UNUSED gpointer user_data);
 
-char *setup_console_socket(void)
+static char *setup_socket(int *fd)
 {
 	struct sockaddr_un addr = {0};
-	_cleanup_free_ const char *tmpdir = g_get_tmp_dir();
-	_cleanup_free_ char *csname = g_build_filename(tmpdir, "conmon-term.XXXXXX", NULL);
+	const char *tmpdir = NULL;
+	_cleanup_free_ char *csname = NULL;
+
+	tmpdir = g_get_tmp_dir();
+	csname = g_build_filename(tmpdir, "conmon.XXXXXX", NULL);
 	/*
 	 * Generate a temporary name. Is this unsafe? Probably, but we can
 	 * replace it with a rename(2) setup if necessary.
@@ -42,20 +45,30 @@ char *setup_console_socket(void)
 	ninfof("addr{sun_family=AF_UNIX, sun_path=%s}", addr.sun_path);
 
 	/* Bind to the console socket path. */
-	console_socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (console_socket_fd < 0)
-		pexit("Failed to create console-socket");
-	if (fchmod(console_socket_fd, 0700))
+	*fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (*fd < 0)
+		pexit("Failed to create socket");
+	if (fchmod(*fd, 0700))
 		pexit("Failed to change console-socket permissions");
 	/* XXX: This should be handled with a rename(2). */
 	if (unlink(csname) < 0)
 		pexit("Failed to unlink temporary random path");
-	if (bind(console_socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+	if (bind(*fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
 		pexit("Failed to bind to console-socket");
-	if (listen(console_socket_fd, 128) < 0)
+	if (listen(*fd, 128) < 0)
 		pexit("Failed to listen on console-socket");
 
 	return g_strdup(csname);
+}
+
+char *setup_console_socket(void)
+{
+	return setup_socket(&console_socket_fd);
+}
+
+char *setup_seccomp_socket(void)
+{
+	return setup_socket(&seccomp_socket_fd);
 }
 
 char *setup_attach_socket(void)

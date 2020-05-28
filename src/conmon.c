@@ -119,6 +119,7 @@ int main(int argc, char *argv[])
 	}
 
 	_cleanup_free_ char *csname = NULL;
+	_cleanup_free_ char *seccomp_listener = NULL;
 	int slavefd_stdin = -1;
 	int slavefd_stdout = -1;
 	int slavefd_stderr = -1;
@@ -160,6 +161,8 @@ int main(int argc, char *argv[])
 		g_unix_fd_add(winsz_fd_r, G_IO_IN, ctrl_winsz_cb, NULL);
 	}
 
+	seccomp_listener = setup_seccomp_socket();
+
 	/* We always create a stderr pipe, because that way we can capture
 	   runc stderr messages before the tty is created */
 	if (pipe2(fds, O_CLOEXEC) < 0)
@@ -168,6 +171,8 @@ int main(int argc, char *argv[])
 	masterfd_stderr = fds[0];
 	slavefd_stderr = fds[1];
 
+	setenv("RUN_OCI_SECCOMP_RECEIVER", seccomp_listener, 1);
+	
 	GPtrArray *runtime_argv = configure_runtime_args(csname);
 
 	/* Setup endpoint for attach */
@@ -301,6 +306,9 @@ int main(int argc, char *argv[])
 		close(slavefd_stdout);
 	if (slavefd_stderr > -1)
 		close(slavefd_stderr);
+
+	if (seccomp_listener != NULL)
+		g_unix_fd_add(seccomp_socket_fd, G_IO_IN, seccomp_accept_cb, csname);
 
 	if (csname != NULL) {
 		g_unix_fd_add(console_socket_fd, G_IO_IN, terminal_accept_cb, csname);
